@@ -145,7 +145,9 @@ lamppost(parkCx+BLOCK/2, parkCz+BLOCK/2);
 
 // ---------- textures / sprites ----------
 var loader = new THREE.TextureLoader();
-var FRAMES = ["stand_right","front","walk_a","walk_b","walk_c","peck","jump_crouch","jump_air","fly_up","fly_mid","fly_down","landing","treehouse"];
+var FRAMES = ["stand_right","front","walk_a","walk_b","walk_c","peck","jump_crouch","jump_air","fly_up","fly_mid","fly_down","landing","treehouse",
+  "fly_away_left","fly_away_right","fly_away","fly_toward","walk_toward","walk_away",
+  "preen","wing_stretch","ruffle","scratch","coo","look_up"];
 var tex = {};
 var toLoad = FRAMES.length, loaded = 0;
 function onTex(){ loaded++; if(loaded>=toLoad){ document.getElementById('loading').style.display='none'; start(); } }
@@ -237,6 +239,10 @@ function say(t){ msgEl.textContent = t; msgEl.style.opacity = 1; msgTimer = 3; }
 var WALK_CYCLE = ["walk_a","walk_c","walk_b","walk_c"];
 var FLY_CYCLE = ["fly_up","fly_mid","fly_down","fly_mid"];
 
+// random idle behaviours — normal pigeon business
+var IDLE_ACTIONS = ["peck","preen","wing_stretch","ruffle","scratch","coo","look_up","front"];
+var idleAction = null, idleActionT = 0, nextIdleIn = 3 + Math.random()*4;
+
 function groundHeightAt(x,z,y){
   // treehouse platform — only counts if you're at/above it (no teleporting up from the ground)
   var dx = x-TREE_X, dz = z-TREE_Z;
@@ -313,24 +319,63 @@ function tick(){
     onGround = false;
   }
 
+  // movement direction relative to camera (for choosing the drawing angle)
+  var camRight = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion); camRight.y = 0; camRight.normalize();
+  var camFwd = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion); camFwd.y = 0; camFwd.normalize();
+  var moveDir = new THREE.Vector3(Math.sin(heading),0,Math.cos(heading));
+  var dotF = moveDir.dot(camFwd);    // +1 = straight away from camera, -1 = toward camera
+  var dotR = moveDir.dot(camRight);  // + = rightward on screen
+
+  // random idle behaviour when just standing around
+  var moving = (fwd!==0 || turn!==0);
+  if(onGround && !moving && peckTimer<=0 && landTimer<=0){
+    if(idleAction){
+      idleActionT -= dt;
+      if(idleActionT<=0){ idleAction = null; nextIdleIn = 3 + Math.random()*5; }
+    } else {
+      nextIdleIn -= dt;
+      if(nextIdleIn<=0){
+        idleAction = IDLE_ACTIONS[Math.floor(Math.random()*IDLE_ACTIONS.length)];
+        idleActionT = 1.1 + Math.random()*1.2;
+      }
+    }
+  } else { idleAction = null; }
+
   // choose frame
-  var frame;
+  var frame, dirFrame = false;
   if(!onGround){
-    if(flying){ frame = FLY_CYCLE[Math.floor(animT*8)%4]; }
+    if(flying){
+      if(fwd>0 && dotF > 0.78){ frame = "fly_away"; dirFrame = true; }
+      else if(fwd>0 && dotF > 0.3){ frame = dotR >= 0 ? "fly_away_right" : "fly_away_left"; dirFrame = true; }
+      else if(fwd>0 && dotF < -0.78){ frame = "fly_toward"; dirFrame = true; }
+      else { frame = FLY_CYCLE[Math.floor(animT*8)%4]; }
+    }
     else if(vel.y > 2){ frame = "jump_air"; }
     else { frame = vel.y < -6 ? "landing" : "jump_air"; }
   } else if(landTimer>0){ frame = "landing"; }
   else if(peckTimer>0){ frame = "peck"; }
-  else if(fwd!==0){ frame = WALK_CYCLE[Math.floor(animT*7)%4]; }
-  else { frame = (Math.floor(animT*0.4)%6===5) ? "front" : "stand_right"; }
+  else if(fwd!==0){
+    if(dotF > 0.82){ frame = "walk_away"; dirFrame = true; }
+    else if(dotF < -0.82){ frame = "walk_toward"; dirFrame = true; }
+    else { frame = WALK_CYCLE[Math.floor(animT*7)%4]; }
+  }
+  else if(idleAction){ frame = idleAction; }
+  else { frame = "stand_right"; }
   if(pigeonMat.map !== tex[frame]){ pigeonMat.map = tex[frame]; pigeonMat.needsUpdate = true; }
 
   // billboard + facing flip
-  pigeon.position.set(pos.x, pos.y + PIG_SIZE*0.5 - 0.08, pos.z);
+  var bob = 0;
+  if(dirFrame){
+    // single-frame directional views: fake the motion with a flap/step pulse
+    var pulse = Math.sin(animT * (onGround ? 14 : 9));
+    pigeon.scale.y = 1 + (onGround ? 0.03 : 0.08) * pulse;
+    bob = (onGround ? 0.05 : 0.12) * pulse;
+  } else {
+    pigeon.scale.y = 1;
+  }
+  pigeon.position.set(pos.x, pos.y + PIG_SIZE*0.5 - 0.08 + bob, pos.z);
   pigeon.quaternion.copy(camera.quaternion);
-  var camRight = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion);
-  var moveDir = new THREE.Vector3(Math.sin(heading),0,Math.cos(heading));
-  var flip = moveDir.dot(camRight) < 0 ? -1 : 1;
+  var flip = dirFrame ? 1 : (moveDir.dot(camRight) < 0 ? -1 : 1);
   pigeon.scale.x = flip;
 
   // treehouse billboard (y-axis only)
