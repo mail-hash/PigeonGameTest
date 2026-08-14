@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PIGEON — a one-line city</title>
+<style>
+  html,body{margin:0;padding:0;overflow:hidden;background:#fdfdfb;height:100%;}
+  #hud{position:fixed;top:18px;left:22px;color:#141419;font-family:Georgia,'Times New Roman',serif;pointer-events:none;user-select:none;}
+  #hud h1{margin:0;font-size:34px;font-weight:normal;font-style:italic;letter-spacing:6px;}
+  #hud p{margin:4px 0 0 2px;font-size:13px;font-style:italic;opacity:.65;}
+  #msg{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);font-family:Georgia,serif;font-style:italic;font-size:16px;color:#141419;opacity:0;transition:opacity .6s;pointer-events:none;}
+  #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#fdfdfb;font-family:Georgia,serif;font-style:italic;font-size:18px;color:#141419;z-index:10;}
+</style>
+</head>
+<body>
+<div id="hud">
+  <h1>PIGEON</h1>
+  <p>WASD / arrows — walk &nbsp;·&nbsp; Space — jump, hold to fly &nbsp;·&nbsp; E — peck</p>
+  <p>fly home to the treehouse</p>
+</div>
+<div id="msg"></div>
+<div id="loading">drawing the city…</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+"use strict";
+var INK = 0x141419, PAPER = 0xfdfdfb;
+
+// ---------- renderer / scene ----------
+var renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+renderer.setClearColor(PAPER);
+document.body.appendChild(renderer.domElement);
+
+var scene = new THREE.Scene();
+scene.fog = new THREE.Fog(PAPER, 90, 240);
+
+var camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 500);
+
+window.addEventListener('resize', function(){
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ---------- materials ----------
+var whiteMat = new THREE.MeshBasicMaterial({color:PAPER, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1});
+var inkLine  = new THREE.LineBasicMaterial({color:INK});
+var fadedLine= new THREE.LineBasicMaterial({color:INK, transparent:true, opacity:0.5});
+
+function inkBox(w,h,d,x,y,z,ry){
+  var g = new THREE.BoxGeometry(w,h,d);
+  var m = new THREE.Mesh(g, whiteMat);
+  var e = new THREE.LineSegments(new THREE.EdgesGeometry(g), inkLine);
+  m.add(e);
+  m.position.set(x,y,z);
+  if(ry) m.rotation.y = ry;
+  return m;
+}
+
+// ---------- city ----------
+var colliders = []; // {x,z,hw,hd,h}
+function seedRand(s){ return function(){ s = Math.sin(s)*10000; return s - Math.floor(s); }; }
+var rand = seedRand(42);
+
+var BLOCK = 26, STREET = 10, GRID = 7;
+var span = GRID*(BLOCK+STREET);
+var half = span/2;
+
+// ground
+var ground = new THREE.Mesh(new THREE.PlaneGeometry(span+220, span+220), whiteMat);
+ground.rotation.x = -Math.PI/2;
+scene.add(ground);
+
+// street grid lines
+(function(){
+  var pts = [];
+  for(var i=0;i<=GRID;i++){
+    var p = -half + i*(BLOCK+STREET) - STREET/2;
+    pts.push(new THREE.Vector3(p, 0.02, -half-20), new THREE.Vector3(p, 0.02, half+20));
+    pts.push(new THREE.Vector3(-half-20, 0.02, p), new THREE.Vector3(half+20, 0.02, p));
+    var q = p + STREET;
+    pts.push(new THREE.Vector3(q, 0.02, -half-20), new THREE.Vector3(q, 0.02, half+20));
+    pts.push(new THREE.Vector3(-half-20, 0.02, q), new THREE.Vector3(half+20, 0.02, q));
+  }
+  var g = new THREE.BufferGeometry().setFromPoints(pts);
+  scene.add(new THREE.LineSegments(g, fadedLine));
+})();
+
+// buildings (skip center block = park)
+var PARK = Math.floor(GRID/2);
+for(var bi=0;bi<GRID;bi++){
+  for(var bj=0;bj<GRID;bj++){
+    if(bi===PARK && bj===PARK) continue;
+    var bx = -half + bi*(BLOCK+STREET) + STREET/2 + BLOCK/2;
+    var bz = -half + bj*(BLOCK+STREET) + STREET/2 + BLOCK/2;
+    var n = 1 + Math.floor(rand()*3);
+    for(var k=0;k<n;k++){
+      var w = 7 + rand()*10, d = 7 + rand()*10, h = 8 + rand()*26;
+      var ox = (rand()-0.5)*(BLOCK-w-2), oz = (rand()-0.5)*(BLOCK-d-2);
+      var b = inkBox(w,h,d, bx+ox, h/2, bz+oz);
+      // window lines
+      var wl = [];
+      var floors = Math.floor(h/3.2);
+      for(var f=1;f<floors;f++){
+        var y = f*3.2;
+        wl.push(new THREE.Vector3(-w/2+0.8, y, d/2+0.03), new THREE.Vector3(w/2-0.8, y, d/2+0.03));
+      }
+      if(wl.length){
+        var wg = new THREE.BufferGeometry().setFromPoints(wl);
+        b.add(new THREE.LineSegments(wg, fadedLine));
+      }
+      scene.add(b);
+      colliders.push({x:bx+ox, z:bz+oz, hw:w/2, hd:d/2, h:h});
+    }
+  }
+}
+
+// lampposts along park edges
+function lamppost(x,z){
+  var grp = new THREE.Group();
+  var pts = [new THREE.Vector3(0,0,0), new THREE.Vector3(0,6,0), new THREE.Vector3(1.2,6.6,0)];
+  grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), inkLine));
+  var bulb = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.SphereGeometry(0.4,6,4)), inkLine);
+  bulb.position.set(1.2,6.4,0);
+  grp.add(bulb);
+  grp.position.set(x,0,z);
+  scene.add(grp);
+}
+var parkCx = -half + PARK*(BLOCK+STREET) + STREET/2 + BLOCK/2;
+var parkCz = parkCx;
+lamppost(parkCx-BLOCK/2, parkCz-BLOCK/2);
+lamppost(parkCx+BLOCK/2, parkCz+BLOCK/2);
+
+// ---------- textures / sprites ----------
+var loader = new THREE.TextureLoader();
+var FRAMES = ["stand_right","front","walk_a","walk_b","walk_c","peck","jump_crouch","jump_air","fly_up","fly_mid","fly_down","landing","treehouse"];
+var tex = {};
+var toLoad = FRAMES.length, loaded = 0;
+function onTex(){ loaded++; if(loaded>=toLoad){ document.getElementById('loading').style.display='none'; start(); } }
+FRAMES.forEach(function(n){
+  tex[n] = loader.load("assets/sprites/"+n+".png", onTex, undefined, onTex);
+  tex[n].minFilter = THREE.LinearFilter;
+});
+
+// treehouse (in the park) — billboard plane
+var TREE_X = parkCx, TREE_Z = parkCz;
+var PLATFORM_Y = 8.2; // landing height on the treehouse
+var treehouse;
+function makeTreehouse(){
+  var g = new THREE.PlaneGeometry(16,16);
+  var m = new THREE.MeshBasicMaterial({map:tex["treehouse"], transparent:true, depthWrite:false, side:THREE.DoubleSide});
+  treehouse = new THREE.Mesh(g,m);
+  treehouse.position.set(TREE_X, 8, TREE_Z);
+  scene.add(treehouse);
+}
+
+// pigeon — billboard plane, smallish
+var pigeon, pigeonMat;
+var PIG_SIZE = 2.2;
+function makePigeon(){
+  pigeonMat = new THREE.MeshBasicMaterial({map:tex["stand_right"], transparent:true, depthWrite:false, side:THREE.DoubleSide});
+  pigeon = new THREE.Mesh(new THREE.PlaneGeometry(PIG_SIZE, PIG_SIZE), pigeonMat);
+  scene.add(pigeon);
+}
+
+// ---------- state ----------
+var pos = new THREE.Vector3(parkCx+6, 0, parkCz+10);
+var vel = new THREE.Vector3();
+var heading = Math.PI; // world direction pigeon faces
+var onGround = true, flying = false;
+var animT = 0, landTimer = 0, peckTimer = 0;
+var keys = {};
+window.addEventListener('keydown', function(e){ keys[e.code]=true; if(["Space","ArrowUp","ArrowDown"].indexOf(e.code)>=0) e.preventDefault(); });
+window.addEventListener('keyup', function(e){ keys[e.code]=false; });
+
+var GRAV = -28, WALK = 7, FLYSPD = 12, JUMP = 9.5, FLAP = 34;
+
+var msgEl = document.getElementById('msg');
+var msgTimer = 0;
+function say(t){ msgEl.textContent = t; msgEl.style.opacity = 1; msgTimer = 3; }
+
+var WALK_CYCLE = ["walk_a","walk_c","walk_b","walk_c"];
+var FLY_CYCLE = ["fly_up","fly_mid","fly_down","fly_mid"];
+
+function groundHeightAt(x,z,y){
+  // treehouse platform — only counts if you're at/above it (no teleporting up from the ground)
+  var dx = x-TREE_X, dz = z-TREE_Z;
+  if(Math.sqrt(dx*dx+dz*dz) < 4.5 && y > PLATFORM_Y - 0.6) return PLATFORM_Y;
+  // building roofs — same rule
+  for(var i=0;i<colliders.length;i++){
+    var c = colliders[i];
+    if(Math.abs(x-c.x)<c.hw && Math.abs(z-c.z)<c.hd && y > c.h - 0.6) return c.h;
+  }
+  return 0;
+}
+
+function collide(nx,nz,y){
+  for(var i=0;i<colliders.length;i++){
+    var c = colliders[i];
+    if(y < c.h - 0.3 && Math.abs(nx-c.x) < c.hw+0.5 && Math.abs(nz-c.z) < c.hd+0.5){
+      return true;
+    }
+  }
+  return false;
+}
+
+var clock = new THREE.Clock();
+var atHome = false;
+
+function tick(){
+  requestAnimationFrame(tick);
+  var dt = Math.min(clock.getDelta(), 0.05);
+  animT += dt;
+  if(msgTimer>0){ msgTimer-=dt; if(msgTimer<=0) msgEl.style.opacity=0; }
+  if(landTimer>0) landTimer-=dt;
+  if(peckTimer>0) peckTimer-=dt;
+
+  // input
+  var fwd = 0, turn = 0;
+  if(keys["KeyW"]||keys["ArrowUp"]) fwd = 1;
+  if(keys["KeyS"]||keys["ArrowDown"]) fwd = -0.6;
+  if(keys["KeyA"]||keys["ArrowLeft"]) turn = 1;
+  if(keys["KeyD"]||keys["ArrowRight"]) turn = -1;
+  if(keys["KeyE"] && onGround && peckTimer<=0){ peckTimer = 0.6; }
+
+  heading += turn * 2.4 * dt;
+
+  // jump / fly
+  if(keys["Space"]){
+    if(onGround){ vel.y = JUMP; onGround = false; flying = false; }
+    else { vel.y += FLAP*dt; flying = true; }
+  }
+  if(pos.y > 55 && vel.y > 0) vel.y = 0; // ceiling
+  vel.y += GRAV*dt;
+  if(vel.y < -18) vel.y = -18;
+
+  var speed = (flying && !onGround) ? FLYSPD : WALK;
+  var mx = Math.sin(heading)*fwd*speed, mz = Math.cos(heading)*fwd*speed;
+  var nx = pos.x + mx*dt, nz = pos.z + mz*dt;
+  if(!collide(nx, pos.z, pos.y)) pos.x = nx;
+  if(!collide(pos.x, nz, pos.y)) pos.z = nz;
+  pos.x = Math.max(-half-15, Math.min(half+15, pos.x));
+  pos.z = Math.max(-half-15, Math.min(half+15, pos.z));
+
+  pos.y += vel.y*dt;
+  var gh = groundHeightAt(pos.x, pos.z, Math.max(pos.y, pos.y - vel.y*dt));
+  if(pos.y <= gh){
+    if(!onGround && vel.y < -4) landTimer = 0.35;
+    pos.y = gh; vel.y = 0;
+    if(!onGround && gh===PLATFORM_Y && !atHome){ atHome = true; say("home sweet treehouse"); }
+    if(gh!==PLATFORM_Y) atHome = false;
+    onGround = true; flying = false;
+  } else if(pos.y > gh + 0.05){
+    onGround = false;
+  }
+
+  // choose frame
+  var frame;
+  if(!onGround){
+    if(flying){ frame = FLY_CYCLE[Math.floor(animT*8)%4]; }
+    else if(vel.y > 2){ frame = "jump_air"; }
+    else { frame = vel.y < -6 ? "landing" : "jump_air"; }
+  } else if(landTimer>0){ frame = "landing"; }
+  else if(peckTimer>0){ frame = "peck"; }
+  else if(fwd!==0){ frame = WALK_CYCLE[Math.floor(animT*7)%4]; }
+  else { frame = (Math.floor(animT*0.4)%6===5) ? "front" : "stand_right"; }
+  if(pigeonMat.map !== tex[frame]){ pigeonMat.map = tex[frame]; pigeonMat.needsUpdate = true; }
+
+  // billboard + facing flip
+  pigeon.position.set(pos.x, pos.y + PIG_SIZE*0.5 - 0.08, pos.z);
+  pigeon.quaternion.copy(camera.quaternion);
+  var camRight = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion);
+  var moveDir = new THREE.Vector3(Math.sin(heading),0,Math.cos(heading));
+  var flip = moveDir.dot(camRight) < 0 ? -1 : 1;
+  pigeon.scale.x = flip;
+
+  // treehouse billboard (y-axis only)
+  if(treehouse){
+    var a = Math.atan2(camera.position.x-TREE_X, camera.position.z-TREE_Z);
+    treehouse.rotation.set(0,a,0);
+  }
+
+  // camera follow
+  var behind = new THREE.Vector3(-Math.sin(heading),0,-Math.cos(heading));
+  var high = Math.max(0, pos.y-6) * 0.25; // when airborne, rise & look down at the city
+  var camTarget = new THREE.Vector3(pos.x + behind.x*10, pos.y + 5.5 + high, pos.z + behind.z*10);
+  camera.position.lerp(camTarget, 1 - Math.pow(0.001, dt));
+  camera.lookAt(pos.x, pos.y + 2 - high*1.4, pos.z);
+
+  renderer.render(scene, camera);
+}
+
+function start(){
+  makeTreehouse();
+  makePigeon();
+  say("coo.");
+  tick();
+}
+})();
+</script>
+</body>
+</html>
