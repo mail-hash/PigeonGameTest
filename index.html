@@ -11,6 +11,12 @@
   #hud p{margin:4px 0 0 2px;font-size:13px;font-style:italic;opacity:.65;}
   #msg{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);font-family:Georgia,serif;font-style:italic;font-size:16px;color:#141419;opacity:0;transition:opacity .6s;pointer-events:none;}
   #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#fdfdfb;font-family:Georgia,serif;font-style:italic;font-size:18px;color:#141419;z-index:10;}
+  .tc{position:fixed;display:none;z-index:5;user-select:none;-webkit-user-select:none;touch-action:none;font-family:Georgia,serif;font-style:italic;color:#141419;}
+  body.touch .tc{display:flex;}
+  #stick{left:24px;bottom:28px;width:120px;height:120px;border:1.5px solid #141419;border-radius:50%;opacity:.55;align-items:center;justify-content:center;}
+  #knob{width:48px;height:48px;border:1.5px solid #141419;border-radius:50%;background:rgba(20,20,25,.06);}
+  #flyBtn{right:24px;bottom:96px;width:84px;height:84px;border:1.5px solid #141419;border-radius:50%;opacity:.6;align-items:center;justify-content:center;font-size:15px;}
+  #peckBtn{right:44px;bottom:28px;width:56px;height:56px;border:1.5px solid #141419;border-radius:50%;opacity:.6;align-items:center;justify-content:center;font-size:13px;}
 </style>
 </head>
 <body>
@@ -21,6 +27,9 @@
 </div>
 <div id="msg"></div>
 <div id="loading">drawing the city…</div>
+<div id="stick" class="tc"><div id="knob"></div></div>
+<div id="flyBtn" class="tc">fly</div>
+<div id="peckBtn" class="tc">peck</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (function(){
@@ -176,6 +185,49 @@ var keys = {};
 window.addEventListener('keydown', function(e){ keys[e.code]=true; if(["Space","ArrowUp","ArrowDown"].indexOf(e.code)>=0) e.preventDefault(); });
 window.addEventListener('keyup', function(e){ keys[e.code]=false; });
 
+// ---------- touch controls (iPhone / iPad / Android) ----------
+var touchInput = {fwd:0, turn:0};
+if('ontouchstart' in window){
+  document.body.classList.add('touch');
+  document.querySelector('#hud p').textContent = "left stick — walk · hold FLY to jump & fly · PECK to peck";
+  var stick = document.getElementById('stick');
+  var knob = document.getElementById('knob');
+  var stickId = null, sx=0, sy=0;
+  stick.addEventListener('touchstart', function(e){
+    e.preventDefault();
+    var t = e.changedTouches[0];
+    stickId = t.identifier; sx = t.clientX; sy = t.clientY;
+  }, {passive:false});
+  window.addEventListener('touchmove', function(e){
+    for(var i=0;i<e.changedTouches.length;i++){
+      var t = e.changedTouches[i];
+      if(t.identifier===stickId){
+        e.preventDefault();
+        var dx = Math.max(-50, Math.min(50, t.clientX - sx));
+        var dy = Math.max(-50, Math.min(50, t.clientY - sy));
+        knob.style.transform = 'translate('+dx+'px,'+dy+'px)';
+        touchInput.fwd = -dy/50;           // push up = walk forward
+        touchInput.turn = -dx/50;          // push left = turn left
+      }
+    }
+  }, {passive:false});
+  window.addEventListener('touchend', function(e){
+    for(var i=0;i<e.changedTouches.length;i++){
+      if(e.changedTouches[i].identifier===stickId){
+        stickId = null; touchInput.fwd = 0; touchInput.turn = 0;
+        knob.style.transform = '';
+      }
+    }
+  });
+  function bindHold(el, code){
+    el.addEventListener('touchstart', function(e){ e.preventDefault(); keys[code]=true; }, {passive:false});
+    el.addEventListener('touchend', function(e){ e.preventDefault(); keys[code]=false; }, {passive:false});
+    el.addEventListener('touchcancel', function(){ keys[code]=false; });
+  }
+  bindHold(document.getElementById('flyBtn'), 'Space');
+  bindHold(document.getElementById('peckBtn'), 'KeyE');
+}
+
 var GRAV = -28, WALK = 7, FLYSPD = 12, JUMP = 9.5, FLAP = 34;
 
 var msgEl = document.getElementById('msg');
@@ -224,6 +276,10 @@ function tick(){
   if(keys["KeyS"]||keys["ArrowDown"]) fwd = -0.6;
   if(keys["KeyA"]||keys["ArrowLeft"]) turn = 1;
   if(keys["KeyD"]||keys["ArrowRight"]) turn = -1;
+  if(touchInput.fwd !== 0 || touchInput.turn !== 0){
+    fwd = touchInput.fwd > 0 ? touchInput.fwd : touchInput.fwd*0.6;
+    turn = touchInput.turn;
+  }
   if(keys["KeyE"] && onGround && peckTimer<=0){ peckTimer = 0.6; }
 
   heading += turn * 2.4 * dt;
